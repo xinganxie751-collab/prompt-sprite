@@ -33,7 +33,7 @@ function Get-VideoFrames([string]$Path, [switch]$Douyin) {
         $result | ConvertFrom-Json
     } catch {
         if ($Douyin) {
-            throw '抖音播放器没有提供可读取的画面。可以打开原链接播放，再拖入录屏或几张连续截图。'
+            throw (New-SpriteFailure '抖音直链没读到画面。请在内置浏览器播放，再点击浏览窗口里的「录屏」。' 'browser')
         }
         throw '无法读取视频画面。请确认已安装 Chrome 或 Edge，尝试 H.264 MP4，或拖入几张关键帧截图。'
     }
@@ -191,11 +191,28 @@ function Invoke-CodexProcess([string]$Executable, [string]$Arguments, [string]$P
     } finally { $process.Dispose() }
 }
 
+function New-SpriteFailure([string]$Message,[string]$Action) {
+    $failure = [InvalidOperationException]::new($Message)
+    $failure.Data['PromptSpriteAction'] = $Action
+    $failure
+}
+
+function ConvertFrom-SpritePrompt([string]$Answer,[string]$Mode) {
+    $types = @('图像提示词','视频提示词','网页实现提示词')
+    $requested = $types | Where-Object { $Mode.StartsWith($_) } | Select-Object -First 1
+    $pattern = '(?m)\A\s*(?:[#*\s]*类型[：:]\s*)?(图像提示词|视频提示词|网页实现提示词)[* \t]*(?=\r?$)\r?\n'
+    $match = [regex]::Match($Answer,$pattern)
+    $type = if ($requested) { $requested } elseif ($match.Success) { $match.Groups[1].Value } else { '类型待确认' }
+    $prompt = if ($match.Success) { $Answer.Substring($match.Length).Trim() } else { $Answer.Trim() }
+    if (!$prompt) { throw 'Codex 返回了空结果，请更换素材后重试。' }
+    @{ Type=$type; Prompt=$prompt }
+}
+
 function Invoke-PromptRequest([string[]]$Files, [string]$Text, [string]$Mode) {
     $exe = Get-CodexExecutable
     $login = Invoke-CodexProcess $exe 'login status'
     if ($login.Code -ne 0 -or ($login.Output + $login.Error) -notmatch '(?i)logged in using chatgpt') {
-        throw 'Codex CLI 尚未使用 ChatGPT 账号登录。点「登录 Codex」完成浏览器登录，再点「生成提示词」。'
+        throw (New-SpriteFailure 'Codex 尚未登录。用 ChatGPT 账号登录后，可直接用当前素材重试。' 'login')
     }
     $request = New-PromptRequest $Files $Text $Mode
     $directory = Join-Path ([IO.Path]::GetTempPath()) ('prompt-sprite-codex-' + [Guid]::NewGuid().ToString('N'))
@@ -203,7 +220,7 @@ function Invoke-PromptRequest([string[]]$Files, [string]$Text, [string]$Mode) {
     try {
         $prompt = [Collections.Generic.List[string]]::new()
         $prompt.Add($request.instructions)
-        $prompt.Add('只返回提示词。仅在需要读取用户给的公开链接时使用网页搜索。无需访问项目、执行命令或修改文件。')
+        $prompt.Add('第一行必须单独输出「类型：图像提示词」「类型：视频提示词」或「类型：网页实现提示词」之一，去掉引号。第二行开始写可直接复制的完整提示词。自动模式下，网页界面操作和交互录屏优先归为网页实现，重点是镜头、动作或剪辑的视频归为视频，静态视觉参考归为图像。手动指定类型时严格使用指定类型。仅在需要读取用户给的公开链接时使用网页搜索。无需访问项目、执行命令或修改文件。')
         $argsList = [Collections.Generic.List[string]]::new()
         foreach ($argument in 'exec','-c','approval_policy=never','--sandbox','read-only','--ephemeral','--ignore-user-config','--skip-git-repo-check','-C',('"' + $directory + '"')) {
             $argsList.Add($argument)
@@ -238,8 +255,7 @@ function Invoke-PromptRequest([string[]]$Files, [string]$Text, [string]$Mode) {
             throw 'Codex 没有生成提示词。请确认账号登录和网络连接后重试。'
         }
         $answer = [IO.File]::ReadAllText($outputPath).Trim()
-        if (!$answer) { throw 'Codex 返回了空结果，请更换素材后重试。' }
-        $answer
+        ConvertFrom-SpritePrompt $answer $Mode
     } finally {
         [IO.Directory]::Delete($directory, $true)
     }
