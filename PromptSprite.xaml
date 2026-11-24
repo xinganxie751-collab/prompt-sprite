@@ -68,7 +68,14 @@
 
   <Border x:Name="Shell" Width="108" CornerRadius="27" BorderThickness="1" BorderBrush="#705486"
           Background="{StaticResource Night}" Padding="0">
-    <StackPanel>
+    <Grid>
+      <Button x:Name="DockTab" Visibility="Collapsed" Height="58" MinHeight="0" Padding="0"
+              BorderThickness="0" Background="Transparent" AutomationProperties.Name="显示提示词小精灵"
+              ToolTip="移入显示小精灵，也可直接拖入素材">
+        <Path Data="M7,0 Q8,5.5 14,7 Q8,8.5 7,14 Q6,8.5 0,7 Q6,5.5 7,0 Z"
+              Fill="#F3DDF8" Width="10" Height="10" Stretch="Uniform"/>
+      </Button>
+      <StackPanel x:Name="SpriteBody">
       <Grid x:Name="Handle" Height="124" Background="Transparent" Cursor="SizeAll" Focusable="True"
             ToolTip="拖动小精灵，点击展开或收起" AutomationProperties.Name="小精灵，按 Enter 展开或收起">
         <Grid x:Name="Heading" Visibility="Collapsed" Margin="23,0,120,0" VerticalAlignment="Center">
@@ -298,6 +305,10 @@
             <Button x:Name="PasteImage" Content="粘贴截图" MinHeight="30" Padding="8,4" Margin="7,0,0,0"
                     ToolTip="按 Win + Shift + S 截取视频画面，再点这里"/>
           </StackPanel>
+          <StackPanel x:Name="Recovery" Orientation="Horizontal" Visibility="Collapsed" Margin="0,6,0,0">
+            <Button x:Name="FixLogin" Content="登录 Codex" Visibility="Collapsed" MinHeight="30" Padding="8,4" Margin="0,0,7,0"/>
+            <Button x:Name="Retry" Content="用原素材重试" MinHeight="30" Padding="8,4"/>
+          </StackPanel>
 
           <Border CornerRadius="16" BorderThickness="1" BorderBrush="{StaticResource Line}" Background="#FFFFFF" Margin="0,13,0,0">
             <StackPanel>
@@ -311,7 +322,10 @@
                     <TextBlock Text="复制提示词"/>
                   </StackPanel>
                 </Button>
-                <TextBlock Text="提示词" FontWeight="Bold" FontSize="15" VerticalAlignment="Center"/>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                  <TextBlock Text="提示词" FontWeight="Bold" FontSize="15" VerticalAlignment="Center"/>
+                  <TextBlock x:Name="ResultType" Foreground="#694584" FontSize="11" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                </StackPanel>
               </DockPanel>
               <Border Height="1" Background="#EFE8F2" Margin="11,0"/>
               <Grid>
@@ -347,6 +361,7 @@
           </DockPanel>
         </StackPanel>
       </Border>
-    </StackPanel>
+      </StackPanel>
+    </Grid>
   </Border>
 </Window>
