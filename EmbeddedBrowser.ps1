@@ -58,7 +58,7 @@ function New-SpriteBrowser([Windows.Window]$Owner, [scriptblock]$Record, [Uri]$I
         <Button x:Name="Record" DockPanel.Dock="Right" Content="录屏" Background="#4F367D" Foreground="White" Margin="8,0,0,0"/>
         <Button x:Name="Go" DockPanel.Dock="Right" Content="打开" IsEnabled="False" Margin="6,0,0,0"/>
         <TextBox x:Name="Address" MinHeight="34" VerticalContentAlignment="Center" Padding="9,3"
-                 Background="#FFFFFF" BorderBrush="#DDCFEA" AutomationProperties.Name="网页地址或抖音分享文案"/>
+                 Background="#FFFFFF" BorderBrush="#DDCFEA" AutomationProperties.Name="网页地址或分享文案"/>
       </DockPanel>
     </Border>
     <TextBlock x:Name="Status" DockPanel.Dock="Bottom" Text="正在启动浏览器…" Foreground="#655D74"
@@ -92,7 +92,7 @@ function New-SpriteBrowser([Windows.Window]$Owner, [scriptblock]$Record, [Uri]$I
     }
     $navigate = {
         $target = & $parseUrl $address.Text
-        if (!$target) { $status.Text = & $tr '请粘贴网页地址，或包含链接的抖音分享文案。'; return }
+        if (!$target) { $status.Text = & $tr '请粘贴网页地址，或包含链接的分享文案。'; return }
         if ($view.CoreWebView2) { $view.CoreWebView2.Navigate($target.AbsoluteUri) }
     }.GetNewClosure()
     $go.Add_Click({ & $navigate }.GetNewClosure())
@@ -170,7 +170,7 @@ function New-SpriteBrowser([Windows.Window]$Owner, [scriptblock]$Record, [Uri]$I
         $uri = $null
         if (![Uri]::TryCreate($event.Uri,[UriKind]::Absolute,[ref]$uri) -or $uri.Scheme -notin @('http','https') -or $uri.UserInfo) {
             $event.Cancel = $true
-            $status.Text = & $tr '该链接要求打开其他应用。可以直接在抖音里播放，再用小精灵录屏。'
+            $status.Text = & $tr '该链接要求打开其他应用。请在对应应用中播放，再用小精灵录屏。'
             return
         }
         $status.Text = & $tr '正在打开网页…'
@@ -188,7 +188,7 @@ function New-SpriteBrowser([Windows.Window]$Owner, [scriptblock]$Record, [Uri]$I
             if ($sender.Source) { $address.Text = $sender.Source }
             $status.Text = ''
         } elseif ($event.WebErrorStatus -ne 'OperationCanceled') {
-            $status.Text = & $tr '网页加载失败。请检查网络或尝试用抖音 App 播放。'
+            $status.Text = & $tr '网页加载失败。请检查网络，或在其他浏览器或应用中打开。'
         }
     }.GetNewClosure()
     $view.Add_CoreWebView2InitializationCompleted({
@@ -208,7 +208,7 @@ function New-SpriteBrowser([Windows.Window]$Owner, [scriptblock]$Record, [Uri]$I
         & $navigate
     }.GetNewClosure())
     $browser.Add_Closed({ $probeTimer.Stop(); $state.Closed = $true; $view.Dispose() }.GetNewClosure())
-    $address.Text = $InitialUri.AbsoluteUri
+    $address.Text = if ($InitialUri) { $InitialUri.AbsoluteUri } else { '' }
     Show-SpriteBrowser $browser
     $null = $view.EnsureCoreWebView2Async($null)
     $state

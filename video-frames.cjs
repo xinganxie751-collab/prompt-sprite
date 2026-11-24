@@ -43,6 +43,17 @@ async function getDouyinPlayer(source) {
   throw new Error('Could not resolve a public Douyin video ID.');
 }
 
+async function resolveVideoPage(source) {
+  const url = new URL(source);
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
+    throw new Error('Expected an HTTP or HTTPS video link.');
+  }
+  if (url.protocol === 'https:' && !url.port && douyinHosts.has(url.hostname)) {
+    return getDouyinPlayer(url.href).catch(() => url.href);
+  }
+  return url.href;
+}
+
 async function extract(source, remote) {
   const browserPath = await getBrowser();
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'prompt-sprite-'));
@@ -57,7 +68,7 @@ async function extract(source, remote) {
       url = pathToFileURL(html).href;
     }
     browser = spawn(browserPath, [
-      '--headless=new', '--disable-extensions', '--no-first-run', '--disable-background-networking',
+      '--headless=new', '--disable-gpu', '--disable-extensions', '--no-first-run', '--disable-background-networking',
       ...(remote ? ['--window-size=1100,1050'] : ['--allow-file-access-from-files']),
       '--user-data-dir=' + path.join(directory, 'profile'),
       '--remote-debugging-pipe', 'about:blank'
@@ -96,31 +107,44 @@ async function extract(source, remote) {
       const navigation = await send('Page.navigate', { url }, sessionId);
       if (navigation.errorText) throw new Error(navigation.errorText);
       if (remote) {
+        const findPlayer = `[...document.querySelectorAll('video')]
+          .filter(player => !player.mediaKeys && !player.error)
+          .sort((a,b) => {
+            const area = player => player.clientWidth * player.clientHeight;
+            return area(b) - area(a);
+          })[0]`;
         const evaluate = async (expression) => {
           const response = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, sessionId);
           if (response.exceptionDetails) throw new Error('The public video player could not render a frame.');
           return response.result?.value;
         };
-        let duration;
-        for (let attempt = 0; attempt < 35; attempt++) {
-          duration = await evaluate(`(() => {
-            const v = document.querySelector('video');
-            if (!v || v.mediaKeys) return 0;
+        let duration = 0;
+        let sawPlayer = false;
+        for (let attempt = 0; attempt < (sawPlayer ? 35 : 22); attempt++) {
+          const state = await evaluate(`(() => {
+            const v = ${findPlayer};
+            if (!v) return { player: !!document.querySelector('video') };
             v.muted = true;
-            if (v.readyState < 2) { if (v.paused) void v.play().catch(() => {}); return 0; }
-            if (!v.videoWidth || !Number.isFinite(v.duration)) return 0;
+            if (v.readyState < 2) { if (v.paused) void v.play().catch(() => {}); return {player:true}; }
+            if (!v.videoWidth || !Number.isFinite(v.duration)) return {player:true};
             v.pause();
-            return v.duration;
-          })()`).catch(() => 0);
+            return {player:true, duration:v.duration};
+          })()`).catch(() => null);
+          sawPlayer ||= !!state?.player;
+          duration = state?.duration ?? 0;
           if (duration > 0) break;
           await new Promise(resolve => setTimeout(resolve, 280));
         }
-        if (!(duration > 0)) throw new Error('The public video player did not load playable media.');
+        if (!(duration > 0)) {
+          const error = new Error('The page did not load a playable video.');
+          error.code = sawPlayer ? 'VIDEO_UNAVAILABLE' : 'NO_VIDEO';
+          throw error;
+        }
         const frames = [];
         for (const fraction of [.08, .24, .43, .62, .79, .92]) {
           const time = duration * fraction;
           const frame = await evaluate(`(async () => {
-            const v = document.querySelector('video');
+            const v = ${findPlayer};
             const time = ${JSON.stringify(time)};
             if (!v || v.mediaKeys || !v.videoWidth) return;
             if (Math.abs(v.currentTime - time) > .04) {
@@ -159,7 +183,11 @@ async function extract(source, remote) {
           }
           if (frameUrl?.startsWith('data:image/jpeg;base64,')) frames.push({Time:Math.round(time*10)/10, Url:frameUrl});
         }
-        if (frames.length < 2) throw new Error('The public video player yielded too few frames.');
+        if (frames.length < 2) {
+          const error = new Error('The public video player yielded too few frames.');
+          error.code = 'VIDEO_UNAVAILABLE';
+          throw error;
+        }
         return frames;
       }
       for (let attempt = 0; attempt < 50; attempt++) {
@@ -215,12 +243,13 @@ async function extract(source, remote) {
 
 if (require.main === module) {
   const [input, link] = process.argv.slice(2);
-  const operation = input === '--douyin' && link
-    ? getDouyinPlayer(link).then(url => extract(url, true))
-    : input ? extract(input, false) : Promise.reject(new Error('Expected a local video path or a Douyin link.'));
+  const operation = input === '--url' && link
+    ? resolveVideoPage(link).then(url => extract(url, true))
+    : input && !input.startsWith('--') ? extract(input, false)
+      : Promise.reject(new Error('Expected a local video path or a video link.'));
   operation.then(frames => process.stdout.write(JSON.stringify(frames))).catch(error => {
     console.error(error.message);
-    process.exitCode = 1;
+    process.exitCode = error.code === 'NO_VIDEO' ? 2 : error.code === 'VIDEO_UNAVAILABLE' ? 3 : 1;
   });
 }
 

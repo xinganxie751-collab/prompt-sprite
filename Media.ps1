@@ -1,4 +1,5 @@
 ﻿if (!(Get-Command Get-SpriteText -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'Locale.ps1') }
+if (!(Get-Command Get-SpriteProvider -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'Providers.ps1') }
 Add-Type -AssemblyName System.Drawing
 
 function Convert-ImageToDataUrl([Drawing.Image]$Image) {
@@ -19,8 +20,8 @@ function Convert-ImageToDataUrl([Drawing.Image]$Image) {
     }
 }
 
-function Get-VideoFrames([string]$Path, [switch]$Douyin) {
-    if (!$Douyin -and [IO.Path]::GetFileName($Path) -match '^prompt-sprite-recording-[a-f0-9]{32}\.avi$') {
+function Get-VideoFrames([string]$Path, [switch]$Remote) {
+    if (!$Remote -and [IO.Path]::GetFileName($Path) -match '^prompt-sprite-recording-[a-f0-9]{32}\.avi$') {
         Get-SpriteRecordingFrames $Path
         return
     }
@@ -28,13 +29,16 @@ function Get-VideoFrames([string]$Path, [switch]$Douyin) {
     if (!$node) { throw (Get-SpriteText '视频抽帧需要 Node.js。你也可以拖入几张关键帧截图。') }
     $extractor = Join-Path $PSScriptRoot 'video-frames.cjs'
     try {
-        $arguments = if ($Douyin) { @('--douyin', $Path) } else { @($Path) }
-        $result = & $node.Source $extractor @arguments 2>$null
+        $arguments = if ($Remote) { @('--url', $Path) } else { @($Path) }
+        $result = & { $ErrorActionPreference = 'Continue'; & $node.Source $extractor @arguments 2>$null }
+        if ($Remote -and $LASTEXITCODE -eq 2) { return }
         if ($LASTEXITCODE -ne 0 -or !$result) { throw 'Frame extraction failed' }
-        $result | ConvertFrom-Json
+        foreach ($frame in ($result | ConvertFrom-Json)) { $frame }
     } catch {
-        if ($Douyin) {
-            throw (New-SpriteFailure (Get-SpriteText '抖音直链没读到画面。请在内置浏览器播放，再点击浏览窗口里的「录屏」。') 'browser')
+        if ($Remote) {
+            $failure = New-SpriteFailure (Get-SpriteText '未能从链接读取视频画面。请在浏览器中播放，再录制视频区域。') 'browser'
+            if ($LASTEXITCODE -eq 3) { $failure.Data['VideoPlayerFound'] = $true }
+            throw $failure
         }
         throw (Get-SpriteText '无法读取视频画面。请确认已安装 Chrome 或 Edge，尝试 H.264 MP4，或拖入几张关键帧截图。')
     }
@@ -86,41 +90,60 @@ function Get-SpriteRecordingFrames([string]$Path) {
 }
 
 function Get-ReferenceLinks([string]$Text) {
-    foreach ($match in [regex]::Matches($Text, 'https?://[^\s<>"“”‘’，。！；、｜]+')) {
+    foreach ($match in [regex]::Matches($Text, 'https?://[^\s<>"“”‘’，。！；、｜]+', 'IgnoreCase')) {
         $uri = $null
-        if ([Uri]::TryCreate($match.Value.TrimEnd(')', ']', '}', '.', ','), [UriKind]::Absolute, [ref]$uri)) { $uri }
+        if ([Uri]::TryCreate($match.Value.TrimEnd(')', ']', '}', '.', ','), [UriKind]::Absolute, [ref]$uri) -and !$uri.UserInfo) { $uri }
     }
 }
 
-function Test-DouyinLink([Uri]$Uri) {
-    $Uri.Scheme -eq 'https' -and $Uri.IsDefaultPort -and !$Uri.UserInfo -and $Uri.Host -in @(
-        'douyin.com', 'www.douyin.com', 'v.douyin.com', 'm.douyin.com', 'jingxuan.douyin.com', 'www.iesdouyin.com', 'open.douyin.com'
-    )
+function Test-VideoReference([Uri]$Uri) {
+    $Uri.AbsolutePath -match '\.(mp4|m4v|mov|webm|ogv|m3u8|mpd|avi|wmv|mkv)$|/(watch|videos?|shorts|reels?|livestream|live)(/|$)' -or
+        $Uri.Host -match '(^|\.)(youtube\.com|youtu\.be|bilibili\.com|b23\.tv|vimeo\.com|tiktok\.com|douyin\.com|iesdouyin\.com|twitch\.tv|dailymotion\.com|dai\.ly|kuaishou\.com|kwai\.com)$'
 }
 
-function New-PromptRequest([string[]]$Files, [string]$Text, [string]$Mode, [switch]$Manual) {
+function Get-VideoReferenceCandidates([Uri[]]$Links) {
+    $pages = @($Links | Where-Object { $_.AbsolutePath -notmatch '\.(png|jpe?g|webp|gif)$' })
+    @($pages | Where-Object { Test-VideoReference $_ }) + @($pages | Where-Object { !(Test-VideoReference $_) }) |
+        Select-Object -Unique -First 2
+}
+
+function New-PromptRequest([string[]]$Files, [string]$Text, [string]$Mode) {
     $content = [Collections.Generic.List[object]]::new()
     $displayMode = Get-SpriteText $Mode
     $content.Add(@{ type = 'input_text'; text = Get-SpriteText '目标提示词类型：{0}。以下为用户提供的参考素材。' @($displayMode) })
     $links = @(Get-ReferenceLinks $Text)
     $useSearch = $false
-    $douyinProcessed = $false
     if ($Text) {
         $content.Add(@{ type = 'input_text'; text = $Text.Substring(0, [Math]::Min(24000, $Text.Length)) })
         foreach ($uri in $links) {
-            if (Test-DouyinLink $uri) {
-                if (!$Manual -and !$douyinProcessed -and !$Files.Count) {
-                    $content.Add(@{ type = 'input_text'; text = Get-SpriteText '以下为抖音公开视频播放器的关键帧。请依据画面分析。' })
-                    foreach ($frame in (Get-VideoFrames $uri.AbsoluteUri -Douyin)) {
-                        $content.Add(@{ type = 'input_text'; text = Get-SpriteText '关键帧（秒）：{0}' @($frame.Time) })
-                        $content.Add(@{ type = 'input_image'; image_url = $frame.Url; detail = 'auto' })
-                    }
-                    $douyinProcessed = $true
-                }
-            } elseif ($uri.AbsolutePath -match '\.(png|jpe?g|webp|gif)$') {
+            if ($uri.AbsolutePath -match '\.(png|jpe?g|webp|gif)$') {
                 $content.Add(@{ type = 'input_image'; image_url = $uri.AbsoluteUri; detail = 'auto' })
-                $useSearch = $true
             } else { $useSearch = $true }
+        }
+        if (!$Files.Count) {
+            $candidates = @(Get-VideoReferenceCandidates $links)
+            $videoExpected = $Mode -eq '视频提示词' -or @($candidates | Where-Object { Test-VideoReference $_ }).Count -gt 0
+            foreach ($uri in $candidates) {
+                try { $frames = @(Get-VideoFrames $uri.AbsoluteUri -Remote) }
+                catch {
+                    if ($_.Exception.GetBaseException().Data['VideoPlayerFound']) { $videoExpected = $true }
+                    continue
+                }
+                if (!$frames.Count) { continue }
+                $content.Add(@{ type = 'input_text'; text = Get-SpriteText '以下为链接中的视频关键帧。请依据画面分析。' })
+                foreach ($frame in $frames) {
+                    $content.Add(@{ type = 'input_text'; text = Get-SpriteText '关键帧（秒）：{0}' @($frame.Time) })
+                    $content.Add(@{ type = 'input_image'; image_url = $frame.Url; detail = 'auto' })
+                }
+                $videoExpected = $false
+                $useSearch = $false
+                break
+            }
+            if ($candidates.Count -and $videoExpected) {
+                $failure = New-SpriteFailure (Get-SpriteText '未能从链接读取视频画面。请在浏览器中播放，再录制视频区域。') 'browser'
+            if ($LASTEXITCODE -eq 3) { $failure.Data['VideoPlayerFound'] = $true }
+            throw $failure
+            }
         }
     }
     foreach ($file in $Files) {
@@ -222,31 +245,39 @@ function Get-SpriteOutputInstructions {
 }
 
 function Invoke-SpriteApi($Request,[hashtable]$Settings,[string]$Mode) {
-    $doubao = $Settings.Provider -eq 'doubao'
-    $endpoint = if ($doubao) { 'https://ark.cn-beijing.volces.com/api/v3/chat/completions' } else { 'https://api.deepseek.com/chat/completions' }
-    $model = if ($doubao) { $Settings.DoubaoModel } else { 'deepseek-flash' }
-    $stored = if ($doubao) { $Settings.DoubaoKey } else { $Settings.DeepSeekKey }
-    $provider = if ($doubao) { Get-SpriteText '豆包' } else { 'DeepSeek' }
-    if (!$stored -or !$model) { throw (New-SpriteFailure (Get-SpriteText '请先填写 {0} 的 API 密钥和所需模型信息。' @($provider)) 'provider') }
-    try { $secure = ConvertTo-SecureString $stored }
-    catch { throw (New-SpriteFailure (Get-SpriteText '本机无法解密已保存的密钥，请在模型来源中重新填写。') 'provider') }
+    $definition = Get-SpriteProvider $Settings.Provider
+    $provider = Get-SpriteText $definition.Name
+    $endpoint = if ($definition.EndpointField) { Get-SpriteChatEndpoint $Settings[$definition.EndpointField] } else { [Uri]$definition.Endpoint }
+    $model = if ($definition.ModelField) { $Settings[$definition.ModelField] } else { $definition.Model }
+    $stored = $Settings[$definition.KeyField]
+    if (!$endpoint -or !$model -or (!$stored -and !($definition.EndpointField -and $endpoint.IsLoopback -and $endpoint.Scheme -eq 'http'))) {
+        throw (New-SpriteFailure (Get-SpriteText '请先填写 {0} 的 API 密钥和所需模型信息。' @($provider)) 'provider')
+    }
+    $secure = $null
+    if ($stored) {
+        try { $secure = ConvertTo-SecureString $stored }
+        catch { throw (New-SpriteFailure (Get-SpriteText '本机无法解密已保存的密钥，请在模型来源中重新填写。') 'provider') }
+    }
     $content = foreach ($item in $Request.content) {
         if ($item.type -eq 'input_text') { @{type='text';text=$item.text} }
         else { @{type='image_url';image_url=@{url=$item.image_url}} }
     }
     $payload = @{
         model=$model
-        max_tokens=2400
         messages=@(
             @{role='system';content=($Request.instructions + [Environment]::NewLine +
             '本请求没有网页浏览工具。除非附有实际图片或截图，否则只能使用链接旁提供的文字。不要声称已打开网页或看到视频。')}
             @{role='user';content=@($content)}
         )
     }
-    $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    if ($definition.TokenField) { $payload[$definition.TokenField] = 2400 }
+    $pointer = [IntPtr]::Zero
     $headers = @{}
     try {
-        $headers.Authorization = 'Bearer ' + [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+        if ($secure) {
+            $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+            $headers.Authorization = 'Bearer ' + [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+        }
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $json = $payload | ConvertTo-Json -Depth 18 -Compress
         $response = Invoke-RestMethod -Uri $endpoint -Method Post -Headers $headers -MaximumRedirection 0 -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($json)) -TimeoutSec 120
@@ -259,8 +290,8 @@ function Invoke-SpriteApi($Request,[hashtable]$Settings,[string]$Mode) {
         throw (Get-SpriteText '无法连接 {0}，请检查网络后重试。' @($provider))
     } finally {
         $headers.Clear()
-        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
-        $secure.Dispose()
+        if ($pointer -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+        if ($secure) { $secure.Dispose() }
     }
     $answer = [string]$response.choices[0].message.content
     ConvertFrom-SpritePrompt $answer $Mode
@@ -291,10 +322,12 @@ function Export-SpriteManual($Request) {
 }
 
 function Invoke-PromptRequest([string[]]$Files, [string]$Text, [string]$Mode, [hashtable]$Settings) {
-    if ($Settings.Provider -eq 'manual') { return (Export-SpriteManual (New-PromptRequest $Files $Text $Mode -Manual)) }
-    if ($Settings.Provider -in 'doubao','deepseek') {
-        $stored = if ($Settings.Provider -eq 'doubao') { $Settings.DoubaoKey } else { $Settings.DeepSeekKey }
-        if (!$stored) { throw (New-SpriteFailure (Get-SpriteText '请先在「模型来源」中填写所选服务的 API 密钥。') 'provider') }
+    if ($Settings.Provider -eq 'manual') { return (Export-SpriteManual (New-PromptRequest $Files $Text $Mode)) }
+    $definition = Get-SpriteProvider $Settings.Provider
+    if ($definition.KeyField) {
+        if (!$definition.EndpointField -and !$Settings[$definition.KeyField]) {
+            throw (New-SpriteFailure (Get-SpriteText '请先在「模型来源」中填写所选服务的 API 密钥。') 'provider')
+        }
         return (Invoke-SpriteApi (New-PromptRequest $Files $Text $Mode) $Settings $Mode)
     }
     $exe = Get-CodexExecutable

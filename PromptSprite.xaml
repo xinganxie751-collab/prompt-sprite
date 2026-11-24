@@ -301,7 +301,7 @@
             </TextBlock.Style>
           </TextBlock>
           <StackPanel x:Name="LinkFallback" Orientation="Horizontal" Visibility="Collapsed" Margin="0,6,0,0">
-            <Button x:Name="OpenSource" Content="在小精灵里打开抖音" MinHeight="30" Padding="8,4"/>
+            <Button x:Name="OpenSource" Content="在内置浏览器打开链接" MinHeight="30" Padding="8,4"/>
             <Button x:Name="PasteImage" Content="粘贴截图" MinHeight="30" Padding="8,4" Margin="7,0,0,0"
                     ToolTip="按 Win + Shift + S 截取视频画面，再点这里"/>
           </StackPanel>

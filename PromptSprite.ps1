@@ -35,7 +35,7 @@ $window.Top = [Windows.SystemParameters]::WorkArea.Top + 95
 function Reset-SpriteIdle { $script:lastSpriteUse = [DateTime]::UtcNow }
 
 function Update-ProviderLabel {
-    $label = @{codex='由 Codex 生成';doubao='由豆包生成';deepseek='由 DeepSeek 生成';manual='手动导出模式'}[$script:providerSettings.Provider]
+    $label = (Get-SpriteProvider $script:providerSettings.Provider).Label
     $controls.ProviderLabel.Text = Get-SpriteText $label
 }
 Update-ProviderLabel
@@ -167,8 +167,9 @@ function Open-EmbeddedReference {
     try {
         . (Join-Path $PSScriptRoot 'Media.ps1')
         . (Join-Path $PSScriptRoot 'EmbeddedBrowser.ps1')
-        $uri = Get-ReferenceLinks $controls.Input.Text |
-            Where-Object { $_.Scheme -in @('http','https') -and !$_.UserInfo } | Select-Object -First 1
+        $links = @(Get-ReferenceLinks $controls.Input.Text)
+        $uri = @(Get-VideoReferenceCandidates $links)[0]
+        if (!$uri) { $uri = $links | Select-Object -First 1 }
         if ($script:spriteBrowser -and !$script:spriteBrowser.Closed) {
             Show-SpriteBrowser $script:spriteBrowser.Window
             if ($uri) {
@@ -180,7 +181,6 @@ function Open-EmbeddedReference {
             $controls.Status.Text = Get-SpriteText '内置浏览器已打开。'
             return
         }
-        if (!$uri) { $uri = [Uri]'https://www.douyin.com/' }
         $record = ${function:Start-RegionRecording}
         $script:spriteBrowser = New-SpriteBrowser $window $record $uri
         $controls.Status.Text = Get-SpriteText '内置浏览器已打开。'
