@@ -1,23 +1,34 @@
-# 提示词小精灵 · Prompt Sprite
+# Prompt Sprite
 
-一个 Windows 置顶桌面挂件。把图片、视频、文本或链接拖给小精灵，它会用你登录的 Codex 账号生成可复制的参考提示词。
+Prompt Sprite is an always-on-top Windows desktop widget that turns images, videos, screen recordings, text, and links into reusable prompts. Drop a reference onto the widget and get a prompt for an image, a video, or a web implementation.
 
-## 启动
+## Get started
 
-1. 下载并解压整个仓库，保留文件夹结构。
-2. 双击 **启动小精灵.cmd**，点击小精灵展开窗口。
-3. 首次使用时点击 **登录 Codex**，在浏览器完成 ChatGPT 登录。生成使用该账号的 Codex 用量。
+1. Download and extract the whole repository. Keep its folder structure intact.
+2. Double-click **Launch Prompt Sprite.cmd**. The widget opens expanded in the center of the screen. If it docks later, hover over its edge tab or select Prompt Sprite in the Windows taskbar.
+3. Open **Model provider** and choose Codex, Doubao, DeepSeek, or manual export.
+4. In the same panel, choose **Interface and output language**, then **Save**. English is the default for new installations. You can also use Simplified Chinese, Japanese, Korean, Russian, or German. Your choice is saved and applies to future prompts and manual export instructions.
 
-需要 Windows x64、Windows PowerShell 5.1、Codex CLI。内置浏览器还需要 Microsoft Edge WebView2 Runtime。分析上传的视频文件或尝试读取抖音公开播放器时，需要 Node.js 20 或更新版本，以及 Chrome 或 Edge。
+## Model providers
 
-## 使用
+| Provider | Setup |
+| --- | --- |
+| Codex | Install the Codex CLI and sign in with your ChatGPT account. |
+| Doubao | Enter your Ark API key and a vision model ID or endpoint. |
+| DeepSeek | Enter your DeepSeek API key. This integration requests the `deepseek-flash` model. |
+| Manual export | Prepare instructions and keyframes locally for a chat service of your choice. No account is needed to export. |
 
-- 直接拖入素材，或粘贴链接和分享文案。生成后点击 **复制提示词**。
-- 鼠标离开小精灵后，它约 4 秒后会贴到屏幕边缘。鼠标移到标签上即可唤出，也可直接把素材拖到标签上。
-- 通过 **内置浏览器** 播放视频，点击 **录屏**。识别到播放器时可确认选区后开始，也可以手动框选。按 **Ctrl + Shift + F10** 或点击 **停止录制**。单次录制最长 30 秒，只录画面。
-- 结果区会显示提示词类型。切换图像、视频或网页实现类型后，可以用原素材再生成一次。
-- 抖音链接能否直接抽帧，取决于对应网页播放器能否提供画面。网页能播但直链无法抽帧时，可使用内置浏览器的录屏入口。
+The widget runs on Windows x64 with Windows PowerShell 5.1. The built-in browser uses Microsoft Edge WebView2 Runtime. Extracting frames from video files or supported public Douyin players requires Node.js 20 or later and Chrome or Edge.
 
-录屏临时保存在本机。生成提示词时，选定的文本、图片或视频关键帧会交给 Codex 处理。内置浏览器的用户资料保存在本机的应用数据目录。
+## Use it
 
-WebView2 SDK 的许可和第三方声明位于 [webview2](webview2/)。
+- Drop a file, paste a link or text, or record an area of the screen. Select **Copy prompt** when the result is ready.
+- Leave the widget idle and it docks as a narrow tab. Hover over the tab to reveal the widget. You can also drop files directly onto the tab.
+- If a Douyin share link cannot provide frames directly, open it in **Browser**, play the video, and select **Record**. Confirm the detected player area or select an area yourself. Press **Ctrl + Shift + F10** or select **Stop recording** to finish. Recordings contain up to 30 seconds of video without audio.
+- Change the prompt type and generate again to reuse the current reference.
+
+## Data and storage
+
+Recordings are stored temporarily on your computer. When generating automatically, Prompt Sprite passes the selected text, images, and keyframes to your chosen provider and uses its quota. For ordinary web pages in Doubao or DeepSeek mode, attach screenshots or a recording as visual references. Manual export saves instructions and frames locally. API keys are encrypted for the current Windows user. The built-in browser keeps its profile in the local application data directory.
+
+See [webview2](webview2/) for WebView2 SDK license information and third-party notices.

@@ -6,7 +6,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 $reader = [Xml.XmlNodeReader]::new($markup)
 $window = [Windows.Markup.XamlReader]::Load($reader)
 $controls = @{}
-foreach ($name in 'Shell','SpriteBody','DockTab','Handle','Heading','Mascot','PetScale','PetTilt','EyeLids','Badge','CompactName','Caption','Details','DropSurface','Settings','Browser','Collapse','Quit','Source','Input','Mode','Generate','Browse','CaptureRegion','Status','LinkFallback','OpenSource','PasteImage','Recovery','FixLogin','Retry','ResultType','Output','Copy') {
+foreach ($name in 'Shell','SpriteBody','DockTab','Handle','Heading','Mascot','PetScale','PetTilt','EyeLids','Badge','CompactName','Caption','Details','DropSurface','Settings','ProviderLabel','Browser','Collapse','Quit','Source','Input','Mode','Generate','Browse','CaptureRegion','Status','LinkFallback','OpenSource','PasteImage','Recovery','FixLogin','FixProvider','Retry','ResultType','OpenExport','Output','Copy') {
     $controls[$name] = $window.FindName($name)
 }
 
@@ -15,6 +15,12 @@ $script:clipboardImage = $null
 $script:screenRecording = $null
 $script:spriteBrowser = $null
 $script:job = $null
+$script:exportPath = $null
+. (Join-Path $PSScriptRoot 'Locale.ps1')
+. (Join-Path $PSScriptRoot 'Providers.ps1')
+$script:providerSettings = Read-SpriteProviders
+$script:spriteLanguage.Current = $script:providerSettings.Language
+Set-SpriteLocalizedTree $window
 $script:dragStart = $null
 $script:expanded = $false
 $script:dockSide = ''
@@ -27,6 +33,12 @@ $window.Left = [Windows.SystemParameters]::WorkArea.Right - 130
 $window.Top = [Windows.SystemParameters]::WorkArea.Top + 95
 
 function Reset-SpriteIdle { $script:lastSpriteUse = [DateTime]::UtcNow }
+
+function Update-ProviderLabel {
+    $label = @{codex='由 Codex 生成';doubao='由豆包生成';deepseek='由 DeepSeek 生成';manual='手动导出模式'}[$script:providerSettings.Provider]
+    $controls.ProviderLabel.Text = Get-SpriteText $label
+}
+Update-ProviderLabel
 
 function Get-SpriteScreen {
     Add-Type -AssemblyName System.Windows.Forms
@@ -99,7 +111,7 @@ function Set-SpriteDocked {
 $dockTimer = [Windows.Threading.DispatcherTimer]::new()
 $dockTimer.Interval = [TimeSpan]::FromMilliseconds(250)
 $dockTimer.Add_Tick({
-    if ($script:dockSide -or !$window.IsVisible -or $window.Opacity -lt 1) { return }
+    if ($script:dockSide -or !$window.IsVisible -or $window.Opacity -lt 1 -or [DateTime]::UtcNow -lt $script:startupGraceEnds) { return }
     if ($window.IsMouseOver -or $script:dragStart -or $script:job -or $script:recordingOrPicking -or
         $controls.Mode.IsDropDownOpen) {
         Reset-SpriteIdle
@@ -111,6 +123,7 @@ $dockTimer.Add_Tick({
 })
 $window.Add_Loaded({ Reset-SpriteIdle; $dockTimer.Start() })
 $window.Add_PreviewKeyDown({ Reset-SpriteIdle })
+$window.Add_Activated({ if ($script:dockSide) { Set-Expanded $true } })
 $controls.DockTab.Add_MouseEnter({ Show-DockedSprite })
 $controls.DockTab.Add_Click({ Set-Expanded $true })
 
@@ -120,16 +133,34 @@ function Open-CodexLogin {
         $exe = Get-CodexExecutable
         $state = Invoke-CodexProcess $exe 'login status'
         if ($state.Code -eq 0 -and ($state.Output + $state.Error) -match '(?i)logged in using chatgpt') {
-            $controls.Status.Text = 'Codex 已登录，可以用当前素材继续生成。'
+            $controls.Status.Text = Get-SpriteText 'Codex 已登录，可以用当前素材继续生成。'
             return
         }
         $null = Start-Process -FilePath $exe -ArgumentList 'login' -WindowStyle Normal -PassThru
         $controls.Status.Text = if ($controls.Recovery.Visibility -eq 'Visible') {
-            '请在浏览器用 ChatGPT 账号登录，完成后点「用原素材重试」。'
-        } else { '请在浏览器用 ChatGPT 账号登录，完成后回这里生成提示词。' }
+            Get-SpriteText '请在浏览器用 ChatGPT 账号登录，完成后点「用原素材重试」。'
+        } else { Get-SpriteText '请在浏览器用 ChatGPT 账号登录，完成后回这里生成提示词。' }
     } catch {
         $controls.Status.Text = $_.Exception.GetBaseException().Message
     }
+}
+
+function Open-SpriteProviders {
+    if ($script:job) { return }
+    $script:recordingOrPicking = $true
+    try {
+        $selection = Edit-SpriteProviders $window $script:providerSettings
+        if (!$selection) { return }
+        Save-SpriteProviders $selection.Settings
+        $script:providerSettings = $selection.Settings
+        $script:spriteLanguage.Current = $script:providerSettings.Language
+        Set-SpriteLocalizedTree $window
+        if ($script:spriteBrowser -and !$script:spriteBrowser.Closed) { Set-SpriteLocalizedTree $script:spriteBrowser.Window }
+        Update-ProviderLabel
+        $controls.Status.Text = Get-SpriteText '模型来源已保存。可以用当前素材继续。'
+        if ($selection.Login) { Open-CodexLogin }
+    } catch { $controls.Status.Text = Get-SpriteText '无法保存模型设置，请检查本机设置目录。' }
+    finally { $script:recordingOrPicking = $false; Reset-SpriteIdle }
 }
 
 function Open-EmbeddedReference {
@@ -146,13 +177,13 @@ function Open-EmbeddedReference {
                     $script:spriteBrowser.View.CoreWebView2.Navigate($uri.AbsoluteUri)
                 }
             }
-            $controls.Status.Text = '内置浏览器已打开。'
+            $controls.Status.Text = Get-SpriteText '内置浏览器已打开。'
             return
         }
         if (!$uri) { $uri = [Uri]'https://www.douyin.com/' }
         $record = ${function:Start-RegionRecording}
         $script:spriteBrowser = New-SpriteBrowser $window $record $uri
-        $controls.Status.Text = '内置浏览器已打开。'
+        $controls.Status.Text = Get-SpriteText '内置浏览器已打开。'
     } catch {
         $controls.Status.Text = $_.Exception.GetBaseException().Message
     }
@@ -170,18 +201,20 @@ function Set-Files([string[]]$Paths) {
     }
     $controls.Source.Text = if ($script:files.Count) {
         ($script:files | ForEach-Object { [IO.Path]::GetFileName($_) }) -join ' · '
-    } else { '拖入图片、视频或文本' }
+    } else { Get-SpriteText '拖入图片、视频或文本' }
 }
 
 function Start-Generation {
     if ($script:job) { return }
     Set-Expanded $true
     $text = $controls.Input.Text.Trim()
-    if (!$script:files.Count -and !$text) { $controls.Status.Text = '先拖入素材，或粘贴链接。'; return }
-    $controls.Status.Text = '正在读取素材并生成提示词…'
+    if (!$script:files.Count -and !$text) { $controls.Status.Text = Get-SpriteText '先拖入素材，或粘贴链接。'; return }
+    $controls.Status.Text = Get-SpriteText '正在读取素材并生成提示词…'
     $controls.LinkFallback.Visibility = 'Collapsed'
     $controls.Recovery.Visibility = 'Collapsed'
-    $controls.Caption.Text = '生成中…'
+    $controls.OpenExport.Visibility = 'Collapsed'
+    $script:exportPath = $null
+    $controls.Caption.Text = Get-SpriteText '生成中…'
     $controls.Badge.Visibility = 'Visible'
     $controls.Generate.IsEnabled = $false
     $controls.Browse.IsEnabled = $false
@@ -198,25 +231,28 @@ function Start-Generation {
     $runspace.Open()
     $worker.Runspace = $runspace
     $work = {
-        param($ModulePath, $Files, $Text, $Mode)
+        param($ModulePath, $Files, $Text, $Mode, $Settings)
         $ErrorActionPreference = 'Stop'
+        . (Join-Path ([IO.Path]::GetDirectoryName($ModulePath)) 'Locale.ps1')
+        $script:spriteLanguage.Current = $Settings.Language
         . $ModulePath
-        try { Invoke-PromptRequest $Files $Text $Mode }
+        try { Invoke-PromptRequest $Files $Text $Mode $Settings }
         catch {
             $failure = $_.Exception.GetBaseException()
             @{ Error=$failure.Message; Action=[string]$failure.Data['PromptSpriteAction'] }
         }
     }
-    $mode = $controls.Mode.SelectedItem.Content
-    $null = $worker.AddScript($work).AddArgument((Join-Path $PSScriptRoot 'Media.ps1')).AddArgument([string[]]$script:files).AddArgument($text).AddArgument($mode)
+    $mode = $controls.Mode.SelectedItem.Tag
+    $null = $worker.AddScript($work).AddArgument((Join-Path $PSScriptRoot 'Media.ps1')).AddArgument([string[]]$script:files).AddArgument($text).AddArgument($mode).AddArgument($script:providerSettings.Clone())
     $script:job = @{ Worker = $worker; Runspace = $runspace; Result = $worker.BeginInvoke() }
     $poll.Start()
 }
 
 function Show-GenerationFailure([string]$Message,[string]$Action) {
     $controls.Status.Text = $Message
-    $controls.Caption.Text = '可重试'
+    $controls.Caption.Text = Get-SpriteText '可重试'
     $controls.FixLogin.Visibility = if ($Action -eq 'login') { 'Visible' } else { 'Collapsed' }
+    $controls.FixProvider.Visibility = if ($Action -eq 'provider') { 'Visible' } else { 'Collapsed' }
     $controls.LinkFallback.Visibility = if ($Action -eq 'browser') { 'Visible' } else { 'Collapsed' }
     $controls.Recovery.Visibility = if ($Action -eq 'browser') { 'Collapsed' } else { 'Visible' }
 }
@@ -228,15 +264,19 @@ $poll.Add_Tick({
     $poll.Stop()
     try {
         $answer = $script:job.Worker.EndInvoke($script:job.Result) | Select-Object -Last 1
-        if (!$answer -or (!$answer.Error -and !$answer.Prompt)) { throw '没有收到提示词。可以用原素材重试。' }
+        if (!$answer -or (!$answer.Error -and !$answer.Prompt)) { throw (Get-SpriteText '没有收到提示词。可以用原素材重试。') }
         if ($answer.Error) {
             Show-GenerationFailure $answer.Error $answer.Action
         } else {
             $controls.Output.Text = $answer.Prompt
-            $controls.ResultType.Text = $answer.Type
+            $controls.ResultType.Text = Get-SpriteText $answer.Type
             $controls.Copy.IsEnabled = [bool]$answer.Prompt
-            $controls.Status.Text = '素材已保留。可切换类型后重新生成。'
-            $controls.Caption.Text = '已生成'
+            if ($answer.ExportPath) {
+                $script:exportPath = $answer.ExportPath
+                $controls.OpenExport.Visibility = 'Visible'
+                $controls.Status.Text = Get-SpriteText '已在本机准备素材。复制指令，再把画面附到聊天网页。'
+            } else { $controls.Status.Text = Get-SpriteText '素材已保留。可切换类型后重新生成。' }
+            $controls.Caption.Text = Get-SpriteText '已生成'
         }
     } catch {
         Show-GenerationFailure $_.Exception.GetBaseException().Message ''
@@ -373,8 +413,14 @@ $window.Add_PreviewDrop({
     } else { return }
     Start-Generation
 })
-$controls.Settings.Add_Click({ Open-CodexLogin })
+$controls.Settings.Add_Click({ Open-SpriteProviders })
 $controls.FixLogin.Add_Click({ Open-CodexLogin })
+$controls.FixProvider.Add_Click({ Open-SpriteProviders })
+$controls.OpenExport.Add_Click({
+    if ($script:exportPath -and [IO.Directory]::Exists($script:exportPath)) {
+        Start-Process explorer.exe -ArgumentList ('"' + $script:exportPath + '"')
+    }
+})
 $controls.Retry.Add_Click({ Start-Generation })
 $controls.Browser.Add_Click({ Open-EmbeddedReference })
 $controls.OpenSource.Add_Click({ Open-EmbeddedReference })
@@ -383,7 +429,7 @@ $controls.PasteImage.Add_Click({
     $path = Join-Path ([IO.Path]::GetTempPath()) ('prompt-sprite-clip-' + [Guid]::NewGuid().ToString('N') + '.png')
     try {
         $image = [Windows.Clipboard]::GetImage()
-        if (!$image) { $controls.Status.Text = '剪贴板没有图片。先按 Win + Shift + S 截取视频画面，再点「粘贴截图」。'; return }
+        if (!$image) { $controls.Status.Text = Get-SpriteText '剪贴板没有图片。先按 Win + Shift + S 截取视频画面，再点「粘贴截图」。'; return }
         $encoder = [Windows.Media.Imaging.PngBitmapEncoder]::new()
         $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($image))
         $stream = [IO.File]::Create($path)
@@ -394,7 +440,7 @@ $controls.PasteImage.Add_Click({
         Start-Generation
     } catch {
         Remove-Item -LiteralPath $path -ErrorAction SilentlyContinue
-        $controls.Status.Text = '无法粘贴这张截图。可以保存为 PNG 后拖入小精灵。'
+        $controls.Status.Text = Get-SpriteText '无法粘贴这张截图。可以保存为 PNG 后拖入小精灵。'
     }
 })
 function Start-RegionRecording($Region,$Anchor = $window) {
@@ -411,7 +457,7 @@ function Start-RegionRecording($Region,$Anchor = $window) {
         $recording = Record-VideoRegion $Anchor $region $path
         Set-Files @($path)
         $script:screenRecording = $path
-        $controls.Source.Text = "区域录屏 · $($recording.Seconds) 秒"
+        $controls.Source.Text = (Get-SpriteText '区域录屏 · {0} 秒' @($recording.Seconds))
     } catch {
         Remove-Item -LiteralPath $path -ErrorAction SilentlyContinue
         $controls.Status.Text = $_.Exception.GetBaseException().Message
@@ -431,13 +477,13 @@ $controls.Quit.Add_Click({ $window.Close() })
 $controls.Generate.Add_Click({ Start-Generation })
 $controls.Input.Add_KeyDown({ param($sender,$event) if ($event.Key -eq 'Enter') { Start-Generation } })
 $controls.Copy.Add_Click({
-    try { [Windows.Clipboard]::SetText($controls.Output.Text); $controls.Status.Text = '已复制到剪贴板' }
-    catch { $controls.Status.Text = '剪贴板暂时不可用，可选中文本并手动复制。' }
+    try { [Windows.Clipboard]::SetText($controls.Output.Text); $controls.Status.Text = Get-SpriteText '已复制到剪贴板' }
+    catch { $controls.Status.Text = Get-SpriteText '剪贴板暂时不可用，可选中文本并手动复制。' }
 })
 $controls.Browse.Add_Click({
     $picker = [Microsoft.Win32.OpenFileDialog]::new()
     $picker.Multiselect = $true
-    $picker.Filter = '参考素材|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp;*.mp4;*.mov;*.m4v;*.avi;*.wmv;*.webm;*.mkv;*.txt;*.md;*.html;*.svg|所有文件|*.*'
+    $picker.Filter = (Get-SpriteText '参考素材') + '|*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp;*.mp4;*.mov;*.m4v;*.avi;*.wmv;*.webm;*.mkv;*.txt;*.md;*.html;*.svg|' + (Get-SpriteText '所有文件') + '|*.*'
     $script:recordingOrPicking = $true
     try {
         if ($picker.ShowDialog($window)) { Set-Files $picker.FileNames; $controls.Input.Clear(); Start-Generation }
@@ -458,12 +504,22 @@ $window.Add_Closed({
 })
 
 if ($SmokeTest) {
-    if (!$window.Topmost -or !$window.AllowDrop -or $window.ShowInTaskbar -or $controls.Details.Visibility -ne 'Collapsed') { throw 'Widget startup configuration failed' }
+    if (!$window.Topmost -or !$window.AllowDrop -or !$window.ShowInTaskbar -or $controls.Details.Visibility -ne 'Collapsed') { throw 'Widget startup configuration failed' }
     Set-Expanded $true
     if ($controls.Shell.Width -ne $expandedWidth -or $controls.Details.Visibility -ne 'Visible') { throw 'Widget expansion failed' }
     Set-Expanded $false
-    Write-Output 'Widget XAML, topmost, drop target and expand/collapse verified'
+    Write-Output 'Widget XAML, topmost, taskbar, drop target and expand/collapse verified'
 } else {
-    if ($StartExpanded) { $window.Add_Loaded({ Set-Expanded $true }) }
+    if ($StartExpanded) {
+        $window.Add_Loaded({
+            Set-Expanded $true
+            $area = [Windows.SystemParameters]::WorkArea
+            $size = $controls.Shell.DesiredSize
+            $window.Left = $area.Left + [Math]::Max(0, ($area.Width - $size.Width) / 2)
+            $window.Top = $area.Top + [Math]::Max(0, ($area.Height - $size.Height) / 2)
+            $script:startupGraceEnds = [DateTime]::UtcNow.AddSeconds(20)
+            $null = $window.Activate()
+        })
+    }
     $null = $window.ShowDialog()
 }

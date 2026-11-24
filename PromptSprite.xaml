@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="提示词小精灵" WindowStyle="None" ResizeMode="NoResize"
         Background="Transparent" AllowsTransparency="True" SizeToContent="WidthAndHeight"
-        ShowInTaskbar="False" Topmost="True" AllowDrop="True" UseLayoutRounding="True"
+        ShowInTaskbar="True" Topmost="True" AllowDrop="True" UseLayoutRounding="True"
         FontFamily="Microsoft YaHei UI, Segoe UI" Foreground="#211831" FontSize="13">
   <Window.Resources>
     <SolidColorBrush x:Key="Ink" Color="#211831"/>
@@ -83,7 +83,7 @@
             <TextBlock Text="提示词小精灵" Foreground="#FFF8FF" FontSize="26" FontWeight="Bold" TextTrimming="CharacterEllipsis"/>
             <StackPanel Orientation="Horizontal" Margin="2,8,0,0">
               <Ellipse Width="5" Height="5" Fill="#E5B5FC" VerticalAlignment="Center" Margin="0,0,6,0"/>
-              <TextBlock Text="由 Codex 生成" Foreground="#E1D1EB" FontSize="12"/>
+              <TextBlock x:Name="ProviderLabel" Text="由 Codex 生成" Foreground="#E1D1EB" FontSize="12"/>
             </StackPanel>
           </StackPanel>
         </Grid>
@@ -284,10 +284,10 @@
                   </Setter>
                 </Style>
               </ComboBox.ItemContainerStyle>
-              <ComboBoxItem Content="自动判断类型"/>
-              <ComboBoxItem Content="图像提示词"/>
-              <ComboBoxItem Content="视频提示词"/>
-              <ComboBoxItem Content="网页实现提示词"/>
+              <ComboBoxItem Tag="自动判断类型" Content="自动判断类型"/>
+              <ComboBoxItem Tag="图像提示词" Content="图像提示词"/>
+              <ComboBoxItem Tag="视频提示词" Content="视频提示词"/>
+              <ComboBoxItem Tag="网页实现提示词" Content="网页实现提示词"/>
             </ComboBox>
           </DockPanel>
           <TextBlock x:Name="Status" TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="2,7,2,0"
@@ -307,8 +307,11 @@
           </StackPanel>
           <StackPanel x:Name="Recovery" Orientation="Horizontal" Visibility="Collapsed" Margin="0,6,0,0">
             <Button x:Name="FixLogin" Content="登录 Codex" Visibility="Collapsed" MinHeight="30" Padding="8,4" Margin="0,0,7,0"/>
+            <Button x:Name="FixProvider" Content="检查模型来源" Visibility="Collapsed" MinHeight="30" Padding="8,4" Margin="0,0,7,0"/>
             <Button x:Name="Retry" Content="用原素材重试" MinHeight="30" Padding="8,4"/>
           </StackPanel>
+          <Button x:Name="OpenExport" Content="打开关键帧文件夹" Visibility="Collapsed" HorizontalAlignment="Left"
+                  MinHeight="30" Padding="8,4" Margin="0,6,0,0"/>
 
           <Border CornerRadius="16" BorderThickness="1" BorderBrush="{StaticResource Line}" Background="#FFFFFF" Margin="0,13,0,0">
             <StackPanel>
@@ -354,7 +357,7 @@
           </Border>
 
           <DockPanel LastChildFill="False" Margin="0,9,0,0">
-            <Button x:Name="Settings" DockPanel.Dock="Left" Content="登录 Codex" Background="Transparent" Padding="6,4" MinHeight="30"/>
+            <Button x:Name="Settings" DockPanel.Dock="Left" Content="模型来源" Background="Transparent" Padding="6,4" MinHeight="30"/>
             <Button x:Name="Browser" DockPanel.Dock="Left" Content="内置浏览器" Background="Transparent" Padding="7,4" MinHeight="30" Margin="4,0,0,0"/>
             <Button x:Name="Quit" DockPanel.Dock="Right" Content="退出" Foreground="{StaticResource Muted}" Background="Transparent" Padding="7,4" MinHeight="30"/>
             <Button x:Name="Collapse" DockPanel.Dock="Right" Content="收起" Foreground="{StaticResource Muted}" Background="Transparent" Padding="7,4" MinHeight="30"/>

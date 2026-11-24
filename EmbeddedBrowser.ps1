@@ -1,10 +1,11 @@
-﻿function Initialize-WebView2 {
+﻿if (!(Get-Command Get-SpriteText -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'Locale.ps1') }
+function Initialize-WebView2 {
     if ('Microsoft.Web.WebView2.Wpf.WebView2' -as [type]) { return }
     $directory = Join-Path $PSScriptRoot 'webview2'
     $core = Join-Path $directory 'Microsoft.Web.WebView2.Core.dll'
     $wpf = Join-Path $directory 'Microsoft.Web.WebView2.Wpf.dll'
     if (!(Test-Path -LiteralPath $core) -or !(Test-Path -LiteralPath $wpf)) {
-        throw '没有找到内置浏览器组件。请从完整的小精灵文件夹启动。'
+        throw (Get-SpriteText '没有找到内置浏览器组件。请从完整的小精灵文件夹启动。')
     }
     $env:Path = "$directory;$env:Path"
     $null = [Reflection.Assembly]::LoadFrom($core)
@@ -69,6 +70,8 @@ function New-SpriteBrowser([Windows.Window]$Owner, [scriptblock]$Record, [Uri]$I
     $reader = [Xml.XmlNodeReader]::new($layout)
     $browser = [Windows.Markup.XamlReader]::Load($reader)
     $browser.Owner = $Owner
+    Set-SpriteLocalizedTree $browser
+    $tr=New-SpriteTranslator
     $address = $browser.FindName('Address')
     $status = $browser.FindName('Status')
     $back = $browser.FindName('Back')
@@ -89,7 +92,7 @@ function New-SpriteBrowser([Windows.Window]$Owner, [scriptblock]$Record, [Uri]$I
     }
     $navigate = {
         $target = & $parseUrl $address.Text
-        if (!$target) { $status.Text = '请粘贴网页地址，或包含链接的抖音分享文案。'; return }
+        if (!$target) { $status.Text = & $tr '请粘贴网页地址，或包含链接的抖音分享文案。'; return }
         if ($view.CoreWebView2) { $view.CoreWebView2.Navigate($target.AbsoluteUri) }
     }.GetNewClosure()
     $go.Add_Click({ & $navigate }.GetNewClosure())
@@ -136,14 +139,14 @@ function New-SpriteBrowser([Windows.Window]$Owner, [scriptblock]$Record, [Uri]$I
                 }
             } catch { $region = $null }
             if ($region) {
-                $status.Text = '已找到视频区域。'
+                $status.Text = & $tr '已找到视频区域。'
                 $choice = [Windows.MessageBox]::Show($browser,
-                    '录制检测到的视频区域？请让视频窗口保持可见。选择「否」可手动框选。',
-                    '开始录制视频',[Windows.MessageBoxButton]::YesNoCancel,[Windows.MessageBoxImage]::Question)
+                    (& $tr '录制检测到的视频区域？请让视频窗口保持可见。选择「否」可手动框选。'),
+                    (& $tr '开始录制视频'),[Windows.MessageBoxButton]::YesNoCancel,[Windows.MessageBoxImage]::Question)
                 if ($choice -eq 'Yes') { & $Record $region $browser }
                 elseif ($choice -eq 'No') { & $Record $null $browser }
             } else {
-                $status.Text = '没有找到清晰的视频区域，请手动框选。'
+                $status.Text = & $tr '没有找到清晰的视频区域，请手动框选。'
                 & $Record $null $browser
             }
         } finally { $recordButton.IsEnabled = $true }
@@ -151,7 +154,7 @@ function New-SpriteBrowser([Windows.Window]$Owner, [scriptblock]$Record, [Uri]$I
     $recordButton.Add_Click({
         if (!$view.CoreWebView2) { & $Record $null $browser; return }
         $recordButton.IsEnabled = $false
-        $status.Text = '正在识别视频区域…'
+        $status.Text = & $tr '正在识别视频区域…'
         try {
             $detection.Source = $view.CoreWebView2.Source
             $detection.Task = $view.CoreWebView2.ExecuteScriptAsync($probe)
@@ -167,10 +170,10 @@ function New-SpriteBrowser([Windows.Window]$Owner, [scriptblock]$Record, [Uri]$I
         $uri = $null
         if (![Uri]::TryCreate($event.Uri,[UriKind]::Absolute,[ref]$uri) -or $uri.Scheme -notin @('http','https') -or $uri.UserInfo) {
             $event.Cancel = $true
-            $status.Text = '该链接要求打开其他应用。可以直接在抖音里播放，再用小精灵录屏。'
+            $status.Text = & $tr '该链接要求打开其他应用。可以直接在抖音里播放，再用小精灵录屏。'
             return
         }
-        $status.Text = '正在打开网页…'
+        $status.Text = & $tr '正在打开网页…'
     }.GetNewClosure()
     $onNewWindow = {
         param($sender,$event)
@@ -185,13 +188,13 @@ function New-SpriteBrowser([Windows.Window]$Owner, [scriptblock]$Record, [Uri]$I
             if ($sender.Source) { $address.Text = $sender.Source }
             $status.Text = ''
         } elseif ($event.WebErrorStatus -ne 'OperationCanceled') {
-            $status.Text = '网页加载失败。请检查网络或尝试用抖音 App 播放。'
+            $status.Text = & $tr '网页加载失败。请检查网络或尝试用抖音 App 播放。'
         }
     }.GetNewClosure()
     $view.Add_CoreWebView2InitializationCompleted({
         param($sender,$event)
         if (!$event.IsSuccess) {
-            $status.Text = '内置浏览器启动失败。请确认已安装 Microsoft Edge WebView2 Runtime。'
+            $status.Text = & $tr '内置浏览器启动失败。请确认已安装 Microsoft Edge WebView2 Runtime。'
             return
         }
         $go.IsEnabled = $true

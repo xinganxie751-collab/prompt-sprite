@@ -1,4 +1,5 @@
-﻿Add-Type -AssemblyName System.Drawing, System.Windows.Forms
+﻿if (!(Get-Command Get-SpriteText -ErrorAction SilentlyContinue)) { . (Join-Path $PSScriptRoot 'Locale.ps1') }
+Add-Type -AssemblyName System.Drawing, System.Windows.Forms
 
 function Select-VideoRegion([Windows.Window]$Widget) {
     [xml]$layout = @'
@@ -24,6 +25,7 @@ function Select-VideoRegion([Windows.Window]$Widget) {
 '@
     $reader = [Xml.XmlNodeReader]::new($layout)
     $overlay = [Windows.Markup.XamlReader]::Load($reader)
+    Set-SpriteLocalizedTree $overlay
     $surface = $overlay.FindName('Surface')
     $outline = $overlay.FindName('Outline')
     $state = @{ Start = $null; Region = $null }
@@ -88,14 +90,15 @@ function Record-VideoRegion([Windows.Window]$Widget,[Drawing.Rectangle]$Region,[
     $state = @{ Error = $null }
     $clock = [Diagnostics.Stopwatch]::new()
     $dock = [Windows.Window]::new()
-    $dock.Title = '小精灵正在录屏'
+    $dock.Title = Get-SpriteText '小精灵正在录屏'
     $dock.Width = 184; $dock.Height = 44
     $dock.WindowStyle = 'None'; $dock.ResizeMode = 'NoResize'
     $dock.Topmost = $true; $dock.ShowInTaskbar = $false; $dock.ShowActivated = $false
     $dock.WindowStartupLocation = 'Manual'
     $dock.Background = [Windows.Media.BrushConverter]::new().ConvertFromString('#302342')
     $stop = [Windows.Controls.Button]::new()
-    $stop.Content = '停止录制'
+    $stop.Content = Get-SpriteText '停止录制'
+    $stopLabel = Get-SpriteText '停止录制 · {0:00}s'
     $stop.Foreground = [Windows.Media.Brushes]::White
     $stop.Background = [Windows.Media.BrushConverter]::new().ConvertFromString('#4F367D')
     $stop.FontSize = 13
@@ -136,7 +139,7 @@ function Record-VideoRegion([Windows.Window]$Widget,[Drawing.Rectangle]$Region,[
     $registered = [PromptSprite.RegionRecorder]::RegisterHotKey($helper.Handle,$hotkeyId,0x4006,0x79)
     $recorder = $null
     try {
-        if (!$position -and !$registered) { throw '停止快捷键被占用。请缩小选区，给停止按钮留出空间。' }
+        if (!$position -and !$registered) { throw (Get-SpriteText '停止快捷键被占用。请缩小选区，给停止按钮留出空间。') }
         if ($position) { $dock.Show() }
         $recorder = [PromptSprite.RegionRecorder]::new($Path,$Region,12)
         $timer.Add_Tick({
@@ -145,7 +148,7 @@ function Record-VideoRegion([Windows.Window]$Widget,[Drawing.Rectangle]$Region,[
                 if ($ms -ge 30500) { $loop.Continue = $false; return }
                 if ($ms -lt 500) { return }
                 $recorder.Capture()
-                $stop.Content = '停止录制 · {0:00}s' -f [Math]::Floor(($ms-500)/1000)
+                $stop.Content = $stopLabel -f [Math]::Floor(($ms-500)/1000)
             } catch {
                 $state.Error = $_.Exception
                 $loop.Continue = $false
@@ -155,8 +158,8 @@ function Record-VideoRegion([Windows.Window]$Widget,[Drawing.Rectangle]$Region,[
         $timer.Start()
         [Windows.Threading.Dispatcher]::PushFrame($loop)
         if ($state.Error) { throw $state.Error }
-        if ($recorder.FrameCount -lt 4) { throw '录制时间太短，请播放视频后再录一段。' }
-        if (!$recorder.HasVisibleContent) { throw '录屏没有可见画面，请确认视频正在播放。' }
+        if ($recorder.FrameCount -lt 4) { throw (Get-SpriteText '录制时间太短，请播放视频后再录一段。') }
+        if (!$recorder.HasVisibleContent) { throw (Get-SpriteText '录屏没有可见画面，请确认视频正在播放。') }
         @{ Frames = $recorder.FrameCount; Seconds = [Math]::Round($recorder.FrameCount / 12, 1) }
     } finally {
         $timer.Stop()
