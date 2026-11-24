@@ -20,6 +20,17 @@ function Show-SpriteBrowser([Windows.Window]$Browser) {
     $Browser.Topmost = $wasTopmost
 }
 
+function ConvertTo-VideoScreenRegion($View,$Bounds) {
+    if (!$Bounds -or $Bounds.vw -le 0 -or $Bounds.vh -le 0 -or $View.ActualWidth -le 0 -or $View.ActualHeight -le 0) { return }
+    Add-Type -AssemblyName System.Drawing, System.Windows.Forms
+    $sx = $View.ActualWidth / $Bounds.vw
+    $sy = $View.ActualHeight / $Bounds.vh
+    $a = $View.PointToScreen([Windows.Point]::new($Bounds.x*$sx,$Bounds.y*$sy))
+    $b = $View.PointToScreen([Windows.Point]::new(($Bounds.x+$Bounds.w)*$sx,($Bounds.y+$Bounds.h)*$sy))
+    $rect = [Drawing.Rectangle]::FromLTRB([int][Math]::Ceiling($a.X),[int][Math]::Ceiling($a.Y),[int][Math]::Floor($b.X),[int][Math]::Floor($b.Y))
+    if ($rect.Width -ge 120 -and $rect.Height -ge 90 -and [Windows.Forms.Screen]::FromRectangle($rect).Bounds.Contains($rect)) { $rect }
+}
+
 function New-SpriteBrowser([Windows.Window]$Owner, [scriptblock]$Record, [Uri]$InitialUri) {
     Initialize-WebView2
     [xml]$layout = @'
@@ -88,7 +99,69 @@ function New-SpriteBrowser([Windows.Window]$Owner, [scriptblock]$Record, [Uri]$I
     }.GetNewClosure())
     $back.Add_Click({ if ($view.CanGoBack) { $view.GoBack() } }.GetNewClosure())
     $reload.Add_Click({ if ($view.CoreWebView2) { $view.Reload() } }.GetNewClosure())
-    $browser.FindName('Record').Add_Click({ & $Record }.GetNewClosure())
+    $recordButton = $browser.FindName('Record')
+    $regionConverter = ${function:ConvertTo-VideoScreenRegion}
+    $probe = @'
+(() => {
+  const players = [];
+  for (const video of document.querySelectorAll('video')) {
+    const box = video.getBoundingClientRect();
+    const style = getComputedStyle(video);
+    if (!video.videoWidth || video.readyState < 2 || style.visibility !== 'visible' ||
+        Number(style.opacity) === 0 || video.mediaKeys) continue;
+    const x = Math.max(0, box.left), y = Math.max(0, box.top);
+    const w = Math.min(innerWidth, box.right) - x, h = Math.min(innerHeight, box.bottom) - y;
+    if (w < 160 || h < 90 || w * h < box.width * box.height * .85) continue;
+    const top = document.elementFromPoint(x + w / 2, y + h / 2);
+    const container = video.parentElement;
+    if (!top || (top !== video && !(container && container.contains(top)))) continue;
+    players.push({x, y, w, h, vw: innerWidth, vh: innerHeight, area: w * h});
+  }
+  players.sort((a,b) => b.area - a.area);
+  return players.length && (players.length === 1 || players[0].area >= 1.4 * players[1].area) ? players[0] : null;
+})()
+'@
+    $detection = @{ Task=$null; Deadline=$null; Source=$null }
+    $probeTimer = [Windows.Threading.DispatcherTimer]::new()
+    $probeTimer.Interval = [TimeSpan]::FromMilliseconds(85)
+    $probeTimer.Add_Tick({
+        if (!$detection.Task.IsCompleted -and [DateTime]::UtcNow -lt $detection.Deadline) { return }
+        $probeTimer.Stop()
+        try {
+            $region = $null
+            try {
+                if ($detection.Task.Status -eq 'RanToCompletion' -and $detection.Source -eq $view.CoreWebView2.Source) {
+                    $bounds = $detection.Task.Result | ConvertFrom-Json
+                    $region = & $regionConverter $view $bounds
+                }
+            } catch { $region = $null }
+            if ($region) {
+                $status.Text = '已找到视频区域。'
+                $choice = [Windows.MessageBox]::Show($browser,
+                    '录制检测到的视频区域？请让视频窗口保持可见。选择「否」可手动框选。',
+                    '开始录制视频',[Windows.MessageBoxButton]::YesNoCancel,[Windows.MessageBoxImage]::Question)
+                if ($choice -eq 'Yes') { & $Record $region $browser }
+                elseif ($choice -eq 'No') { & $Record $null $browser }
+            } else {
+                $status.Text = '没有找到清晰的视频区域，请手动框选。'
+                & $Record $null $browser
+            }
+        } finally { $recordButton.IsEnabled = $true }
+    }.GetNewClosure())
+    $recordButton.Add_Click({
+        if (!$view.CoreWebView2) { & $Record $null $browser; return }
+        $recordButton.IsEnabled = $false
+        $status.Text = '正在识别视频区域…'
+        try {
+            $detection.Source = $view.CoreWebView2.Source
+            $detection.Task = $view.CoreWebView2.ExecuteScriptAsync($probe)
+            $detection.Deadline = [DateTime]::UtcNow.AddSeconds(2)
+            $probeTimer.Start()
+        } catch {
+            $recordButton.IsEnabled = $true
+            & $Record $null $browser
+        }
+    }.GetNewClosure())
     $onStarting = {
         param($sender,$event)
         $uri = $null
@@ -131,7 +204,7 @@ function New-SpriteBrowser([Windows.Window]$Owner, [scriptblock]$Record, [Uri]$I
         $core.Add_NavigationCompleted($onCompleted)
         & $navigate
     }.GetNewClosure())
-    $browser.Add_Closed({ $state.Closed = $true; $view.Dispose() }.GetNewClosure())
+    $browser.Add_Closed({ $probeTimer.Stop(); $state.Closed = $true; $view.Dispose() }.GetNewClosure())
     $address.Text = $InitialUri.AbsoluteUri
     Show-SpriteBrowser $browser
     $null = $view.EnsureCoreWebView2Async($null)
